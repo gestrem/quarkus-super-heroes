@@ -1,105 +1,88 @@
-schemaVersion: 2.1.0
+schemaVersion: 2.2.0
 metadata:
-  name: quarkus-super-heroes
+  generateName: test-dev
 components:
-
-  - name: tools-1
+  - name: development-tooling
     container:
-      image: registry.redhat.io/devspaces/udi-rhel8:latest
-      memoryLimit: 2Gi
-      endpoints:
-        - exposure: none
-          name: debug
-          protocol: tcp
-          targetPort: 5005
-        - exposure: public
-          name: 8080-tcp
-          protocol: http
-          targetPort: 8080
-      volumeMounts:
-        - name: m2
-          path: /home/user/.m2
+#      image: quay.io/devfile/universal-developer-image:ubi8-277c10c
+      image: quay.io/devfile/universal-developer-image:ubi8-latest
       env:
-        - name: USE_JAVA17
+        - name: USE_JAVA21
           value: "true"
         - name: KUBEDOCK_ENABLED
           value: "true"
         - name: DOCKER_HOST
-          value: "tcp://localhost:2475"
-
+          value: "tcp://127.0.0.1:2475"
+        - name: TESTCONTAINERS_RYUK_DISABLED
+          value: "true"
+#         - name: KUBEDOCK_PARAMS
+# #          value: "--reverse-proxy --kubeconfig /home/user/.kube/config --initimage quay.io/agiertli/kubedock:0.13.0"
+#           value: "--reverse-proxy"
+        - name: QUARKUS_HTTP_HOST
+          value: 0.0.0.0
+        - name: MAVEN_OPTS
+          value: "-Dmaven.repo.local=/home/user/.m2/repository"
+      memoryLimit: 4Gi
+      cpuLimit: 2500m
+      volumeMounts:
+        - name: m2
+          path: /home/user/.m2
+{%- if values.verify_commits == 'enabled' %}
+        - name: home
+          path: /projects/home
+{%- endif %}
+      endpoints:
+        - name: quarkus-dev
+          targetPort: 8080
+          exposure: public
+          secure: false
+          protocol: https
+        - name: debug
+          targetPort: 5005
+          exposure: none
+          secure: false
+          protocol: tcp
+        - name: tests
+          targetPort: 8081
+          exposure: none
+          secure: false
+          protocol: tcp
   - name: m2
     volume:
       size: 1G
+commands:
+  - id: package
+    exec:
+      label: "1. Package the application"
+      component: development-tooling
+      commandLine: "./mvnw package"
+      group:
+        kind: build
+        isDefault: true
   
-  # - name: mariadb
-  #   container:
-  #     image: quay.io/eclipse/che--mariadb:10.7.1-5a8009369ee57c85b6f4a08406147bd9c505cde6b8250d16a27d2a5febfdead7
-  #     memoryLimit: 300Mi
-  #     endpoints:
-  #       - exposure: none
-  #         name: db
-  #         protocol: tcp
-  #         targetPort: 3306
-  #     env:
-  #       - name: MARIADB_USER
-  #         value: petclinic
-  #       - name: MARIADB_PASSWORD
-  #         value: petclinic
-  #       - name: MARIADB_DATABASE
-  #         value: petclinic
-  #       - name: MARIADB_ALLOW_EMPTY_ROOT_PASSWORD
-  #         value: allow
-  #       - name: PS1
-  #         value: $(echo ${0}) $
-  #     volumeMounts:
-  #       - name: mysqldata
-  #         path: /var/lib/mysql
+  - id: start-dev
+    exec:
+      label: "2. Start Development mode (Hot reload + debug)"
+      component: development-tooling
+      commandLine: "./mvnw compile quarkus:dev"
+      group:
+        kind: run
+        isDefault: true
 
-  # - name: mysqldata
-  #   volume:
-  #     size: 256Mi
+  - id: quarkus-devservices-config
+    exec:
+      label: "Quarkus config"
+      component: development-tooling
+      commandLine: "sed -i \"s/SOMETHING/$(oc get dw -o=jsonpath='{.items[?(@.status.phase==\"Running\")]}'|jq -r '.metadata.name')/\" /projects/*/src/main/resources/application.properties"
+      group:
+        kind: run
+        isDefault: true
 
-# commands:
-#   - id: prepare-database
-#     exec:
-#       component: mariadb
-#       workingDir: ${PROJECT_SOURCE}
-#       commandLine: |
-#         mysql -u root < ${PROJECT_SOURCE}/src/main/resources/db/mysql/user.sql && \
-#         mysql -u root petclinic < ${PROJECT_SOURCE}/src/main/resources/db/mysql/schema.sql && \
-#         mysql -u root petclinic < ${PROJECT_SOURCE}/src/main/resources/db/mysql/data.sql && \
-#         echo "\e[32mDone.\e[0m Database petclinic was configured"
-#       group:
-#         kind: run
-#         isDefault: true
-
-#   - id: maven-build
-#     exec:
-#       component: tools
-#       workingDir: ${PROJECT_SOURCE}
-#       commandLine: mvn clean install
-#       group:
-#         kind: build
-#         isDefault: true
-
-#   - id: run-with-hsqldb
-#     exec:
-#       component: tools
-#       workingDir: ${PROJECT_SOURCE}
-#       commandLine: |
-#         mvn spring-boot:run -DskipTests \
-#         -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005,quiet=y'
-#       group:
-#         kind: run
-#         isDefault: true
-
-#   - id: run-with-mysql
-#     exec:
-#       component: tools
-#       workingDir: ${PROJECT_SOURCE}
-#       commandLine: |
-#         mvn spring-boot:run -DskipTests -Dspring-boot.run.profiles=mysql \
-#         -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005,quiet=y'
-#       group:
-#         kind: run
-#         isDefault: true
+  - id: install-quarkus
+    exec:
+      label: "Quarkus install"
+      component: development-tooling
+      commandLine: "source /home/tooling/.sdkman/bin/sdkman-init.sh && sdk install quarkus"
+events:
+  postStart:
+    - quarkus-devservices-config
